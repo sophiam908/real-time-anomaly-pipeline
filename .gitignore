@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+venv/
+.env
+
+# OS
+.DS_Store
+
+# Spark / Hadoop
+metastore_db/
+derby.log
+*.crc
+
+# Kafka logs
+logs/
+
+# Local data files
+data/*.csv
+data/*.json
+!data/data_store.json   # keep only if you want this tracked
+
+# AWS
+.aws/
+*.pem
+*.key
+
+# Docker
+*.pid
