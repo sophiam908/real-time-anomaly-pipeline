@@ -1,146 +1,126 @@
-import os
 import json
+import os
 import time
-import requests
-from datetime import datetime
+
 from kafka import KafkaProducer
+import websocket
 
-# ---------------------------------------------------------
-# CONFIGURATION
-# ---------------------------------------------------------
-
-# Kafka connection info
-KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
+# -----------------------------
+# Config
+# -----------------------------
+KAFKA_BROKER = os.getenv("KAFKA_BROKER", "kafka:9092")
 KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "stock-data")
 
-# Alpha Vantage API key
-ALPHA_VANTAGE_API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY")
+# Coinbase product IDs (symbols)
+PRODUCT_IDS = ["BTC-USD", "ETH-USD", "SOL-USD", "DOGE-USD", "ADA-USD"]
 
-# List of tickers to rotate through
-TICKERS = ["AAPL", "MSFT", "GOOG", "AMZN", "TSLA"]
-
-# Alpha Vantage endpoint
-ALPHA_URL = "https://www.alphavantage.co/query"
+WS_URL = "wss://ws-feed.exchange.coinbase.com"
 
 
-# ---------------------------------------------------------
-# KAFKA CONNECTION
-# ---------------------------------------------------------
-
-def create_producer():
-    """
-    Try to connect to Kafka.
-    If Kafka isn't ready yet, retry every 3 seconds.
-    This function prints CONSTANTLY so you always know what's happening.
-    """
-    print("[BOOT] Starting Kafka producer setup...")
-
-    while True:
-        try:
-            print(f"[KAFKA] Attempting connection to {KAFKA_BOOTSTRAP_SERVERS}...")
-            producer = KafkaProducer(
-                bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
-                value_serializer=lambda v: json.dumps(v).encode("utf-8"),
-            )
-            print("[KAFKA] Connected successfully!")
-            return producer
-
-        except Exception as e:
-            print(f"[KAFKA] Connection failed: {e}")
-            print("[KAFKA] Retrying in 3 seconds...")
-            time.sleep(3)
+def create_kafka_producer():
+    print("[BOOT] Creating Kafka producer...")
+    producer = KafkaProducer(
+        bootstrap_servers=KAFKA_BROKER,
+        value_serializer=lambda v: json.dumps(v).encode("utf-8"),
+        retries=5,
+    )
+    print(f"[BOOT] Kafka producer connected to {KAFKA_BROKER}")
+    return producer
 
 
-# ---------------------------------------------------------
-# FETCH PRICE FROM ALPHA VANTAGE
-# ---------------------------------------------------------
+producer = None  # global
 
-def fetch_price(ticker):
-    """
-    Fetch the latest stock price for a ticker.
-    This function prints BEFORE and AFTER the API call so you always know what's happening.
-    """
 
-    print(f"[API] Requesting price for {ticker}...")
-
-    params = {
-        "function": "GLOBAL_QUOTE",
-        "symbol": ticker,
-        "apikey": ALPHA_VANTAGE_API_KEY,
-    }
-
+# -----------------------------
+# WebSocket callbacks
+# -----------------------------
+def on_message(ws, message):
+    global producer
     try:
-        response = requests.get(ALPHA_URL, params=params, timeout=10)
-        print(f"[API] Response status: {response.status_code}")
+        data = json.loads(message)
 
-        data = response.json()
+        # We only care about ticker messages
+        if data.get("type") != "ticker":
+            return
 
-        # If API limit is hit, Alpha Vantage returns a note
-        if "Note" in data:
-            print(f"[API] RATE LIMIT HIT: {data['Note']}")
-            return None, None
+        product_id = data.get("product_id")
+        price_str = data.get("price")
+        size_str = data.get("last_size")
+        side = data.get("side")
+        time_str = data.get("time")
 
-        price = float(data["Global Quote"]["05. price"])
-        timestamp = datetime.utcnow().timestamp()
+        if not product_id or not price_str or not size_str or not side or not time_str:
+            return
 
-        print(f"[API] Price for {ticker}: {price}")
-        return price, timestamp
+        price = float(price_str)
+        volume = float(size_str)
+
+        msg_value = {
+            "symbol": product_id,
+            "price": price,
+            "volume": volume,
+            "side": side,          # "buy" or "sell"
+            "timestamp": time_str, # ISO 8601 string
+        }
+
+        print(f"[SEND] {product_id} {side} price={price} volume={volume} ts={time_str}")
+        producer.send(KAFKA_TOPIC, value=msg_value)
 
     except Exception as e:
-        print(f"[API] ERROR fetching price for {ticker}: {e}")
-        return None, None
+        print(f"[ERROR] Failed to process message: {e}")
 
 
-# ---------------------------------------------------------
-# MAIN LOOP
-# ---------------------------------------------------------
+def on_error(ws, error):
+    print(f"[WS ERROR] {error}")
+
+
+def on_close(ws, close_status_code, close_msg):
+    print(f"[WS CLOSE] code={close_status_code}, msg={close_msg}")
+
+
+def on_open(ws):
+    print(f"[WS OPEN] Connected to Coinbase WebSocket: {WS_URL}")
+    sub_msg = {
+        "type": "subscribe",
+        "channels": [
+            {
+                "name": "ticker",
+                "product_ids": PRODUCT_IDS,
+            }
+        ],
+    }
+    ws.send(json.dumps(sub_msg))
+    print(f"[WS SUBSCRIBE] Subscribed to ticker for: {PRODUCT_IDS}")
+
+
+def run_websocket():
+    while True:
+        try:
+            print(f"[BOOT] Connecting to Coinbase WebSocket: {WS_URL}")
+            ws = websocket.WebSocketApp(
+                WS_URL,
+                on_open=on_open,
+                on_message=on_message,
+                on_error=on_error,
+                on_close=on_close,
+            )
+            ws.run_forever()
+        except Exception as e:
+            print(f"[WS FATAL] WebSocket crashed: {e}")
+            print("[WS] Reconnecting in 5 seconds...")
+            time.sleep(5)
+
 
 def main():
-    print("[BOOT] Producer starting...")
+    global producer
+    print("Crypto producer starting...")
+    print(f"[BOOT] Kafka broker: {KAFKA_BROKER}")
+    print(f"[BOOT] Kafka topic: {KAFKA_TOPIC}")
+    print(f"[BOOT] Symbols: {PRODUCT_IDS}")
 
-    # Check API key
-    if not ALPHA_VANTAGE_API_KEY:
-        print("[ERROR] Missing ALPHA_VANTAGE_API_KEY environment variable!")
-        raise ValueError("Missing ALPHA_VANTAGE_API_KEY")
+    producer = create_kafka_producer()
+    run_websocket()
 
-    print("[BOOT] API key loaded successfully.")
-    print(f"[BOOT] Tickers loaded: {TICKERS}")
-
-    # Connect to Kafka
-    producer = create_producer()
-    print(f"[BOOT] Producer connected to Kafka at {KAFKA_BOOTSTRAP_SERVERS}")
-
-    ticker_index = 0
-
-    # Main loop
-    while True:
-        ticker = TICKERS[ticker_index]
-        print(f"\n[LOOP] Fetching data for {ticker} at {datetime.utcnow()}")
-
-        price, ts = fetch_price(ticker)
-
-        if price is not None:
-            message = {
-                "ticker": ticker,
-                "price": price,
-                "timestamp": ts,
-            }
-            print(f"[SEND] Sending message to Kafka: {message}")
-            producer.send(KAFKA_TOPIC, value=message)
-            print("[SEND] Message sent successfully!")
-        else:
-            print(f"[SKIP] Skipping {ticker} due to API error or rate limit.")
-
-        # Move to next ticker
-        ticker_index = (ticker_index + 1) % len(TICKERS)
-
-        print("[SLEEP] Sleeping for 60 seconds...\n")
-        time.sleep(5)
-
-
-# ---------------------------------------------------------
-# ENTRY POINT
-# ---------------------------------------------------------
 
 if __name__ == "__main__":
     main()

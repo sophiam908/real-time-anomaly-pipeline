@@ -1,3 +1,5 @@
 kafka-python
 boto3
 requests
+kafka-python
+websocket-client
