@@ -1,46 +1,49 @@
 import json
-import time
 import os
+import time
 from kafka import KafkaConsumer
 import boto3
 
-TOPIC = "stock-data"
-BOOTSTRAP_SERVERS = "localhost:29092"
+KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
+KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "stock-data")
 
-BUCKET_NAME = "sophia-real-time-pipeline-123"
+S3_BUCKET = os.getenv("S3_BUCKET", "my-anomaly-bucket")
+S3_PREFIX = os.getenv("S3_PREFIX", "raw/stock-data")
 
-consumer = KafkaConsumer(
-    TOPIC,
-    bootstrap_servers=BOOTSTRAP_SERVERS,
-    value_deserializer=lambda x: json.loads(x.decode("utf-8")),
-    auto_offset_reset="earliest",
-    enable_auto_commit=True
-)
 
-s3 = boto3.client("s3")
+def create_consumer():
+    return KafkaConsumer(
+        KAFKA_TOPIC,
+        bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
+        value_deserializer=lambda v: json.loads(v.decode("utf-8")),
+        auto_offset_reset="latest",
+        enable_auto_commit=True,
+        group_id="stock-consumer-group",
+    )
 
-print("📥 Listening...")
 
-for message in consumer:
-    data = message.value
+def main():
+    consumer = create_consumer()
+    s3 = boto3.client("s3")
 
-    print(f"📥 RECEIVED: {data}")
+    print("Consumer running...")
 
-    filename = f"{data['ticker']}_{int(time.time())}.json"
-    local_path = f"/tmp/{filename}"
+    buffer = []
+    batch_size = 100
 
-    # ✅ WRITE FILE FIRST
-    try:
-        with open(local_path, "w") as f:
-            json.dump(data, f)
+    for msg in consumer:
+        buffer.append(msg.value)
 
-        # ✅ THEN UPLOAD
-        s3.upload_file(local_path, BUCKET_NAME, f"raw/{filename}")
-        print(f"☁️ Uploaded to S3: raw/{filename}")
+        if len(buffer) >= batch_size:
+            timestamp = int(time.time())
+            key = f"{S3_PREFIX}/batch_{timestamp}.json"
 
-    except Exception as e:
-        print("❌ Error:", e)
+            body = "\n".join(json.dumps(r) for r in buffer)
+            s3.put_object(Bucket=S3_BUCKET, Key=key, Body=body.encode("utf-8"))
 
-    # Optional cleanup
-    if os.path.exists(local_path):
-        os.remove(local_path)
+            print(f"Wrote {len(buffer)} records to s3://{S3_BUCKET}/{key}")
+            buffer = []
+
+
+if __name__ == "__main__":
+    main()
