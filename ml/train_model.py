@@ -1,50 +1,142 @@
-import json
-import os
-import boto3
-import pandas as pd
-from sklearn.ensemble import IsolationForest
+import sys
+from awsglue.utils import getResolvedOptions
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import (
+    to_timestamp,
+    hour,
+    dayofweek,
+)
+from pyspark.ml import Pipeline
+from pyspark.ml.feature import (
+    StringIndexer,
+    OneHotEncoder,
+    VectorAssembler,
+)
+from pyspark.ml.iforest import IsolationForest
 
-S3_BUCKET = os.getenv("S3_BUCKET", "my-anomaly-bucket")
-INPUT_KEY = "processed/stock-data"
-MODEL_KEY = "models/isolation_forest.json"
+# -----------------------------
+# Read job parameters
+# -----------------------------
+args = getResolvedOptions(sys.argv, ["CLEAN_PATH", "MODEL_PATH"])
 
+CLEAN_PATH = args["CLEAN_PATH"]
+MODEL_PATH = args["MODEL_PATH"]
 
-def load_data():
-    s3 = boto3.client("s3")
-    objs = s3.list_objects_v2(Bucket=S3_BUCKET, Prefix=INPUT_KEY).get("Contents", [])
+spark = SparkSession.builder.getOrCreate()
 
-    parquet_keys = [o["Key"] for o in objs if o["Key"].endswith(".parquet")]
-    if not parquet_keys:
-        return pd.DataFrame()
+print("=== GLUE ANOMALY DETECTION JOB START ===")
+print(f"CLEAN_PATH = {CLEAN_PATH}")
+print(f"MODEL_PATH = {MODEL_PATH}")
 
-    latest = sorted(parquet_keys)[-1]
-    return pd.read_parquet(f"s3://{S3_BUCKET}/{latest}")
+# -----------------------------
+# Load cleaned data
+# -----------------------------
+df = spark.read.json(CLEAN_PATH)
+print("=== INPUT SCHEMA ===")
+df.printSchema()
 
+# Expecting:
+# price: double
+# volume: double
+# side: string
+# symbol: string
+# timestamp: string (ISO 8601)
 
-def main():
-    df = load_data()
-    if df.empty:
-        print("No data found.")
-        return
+# -----------------------------
+# Time-based feature engineering
+# -----------------------------
+df_fe = df.withColumn("ts", to_timestamp("timestamp"))
 
-    X = df[["avg_price"]].values
+df_fe = (
+    df_fe
+    .withColumn("hour_of_day", hour("ts"))
+    .withColumn("day_of_week", dayofweek("ts"))
+)
 
-    model = IsolationForest(contamination=0.05, random_state=42)
-    model.fit(X)
+print("=== AFTER TIME FEATURE ENGINEERING ===")
+df_fe.printSchema()
 
-    payload = {
-        "n_estimators": model.n_estimators,
-        "contamination": model.contamination,
-    }
+# -----------------------------
+# Categorical feature engineering
+# -----------------------------
+side_indexer = StringIndexer(
+    inputCol="side",
+    outputCol="side_index",
+    handleInvalid="keep",
+)
 
-    boto3.client("s3").put_object(
-        Bucket=S3_BUCKET,
-        Key=MODEL_KEY,
-        Body=json.dumps(payload).encode("utf-8"),
-    )
+symbol_indexer = StringIndexer(
+    inputCol="symbol",
+    outputCol="symbol_index",
+    handleInvalid="keep",
+)
 
-    print(f"Saved model to s3://{S3_BUCKET}/{MODEL_KEY}")
+side_encoder = OneHotEncoder(
+    inputCols=["side_index"],
+    outputCols=["side_ohe"],
+)
 
+symbol_encoder = OneHotEncoder(
+    inputCols=["symbol_index"],
+    outputCols=["symbol_ohe"],
+)
 
-if __name__ == "__main__":
-    main()
+# -----------------------------
+# Assemble final feature vector
+# -----------------------------
+feature_cols = [
+    "price",
+    "volume",
+    "hour_of_day",
+    "day_of_week",
+    "side_ohe",
+    "symbol_ohe",
+]
+
+assembler = VectorAssembler(
+    inputCols=feature_cols,
+    outputCol="features",
+)
+
+# -----------------------------
+# Isolation Forest (Anomaly Detection)
+# -----------------------------
+isof = IsolationForest(
+    featuresCol="features",
+    predictionCol="anomaly_prediction",
+    anomalyScoreCol="anomaly_score",
+    contamination=0.01,  # top 1% anomalies
+)
+
+# -----------------------------
+# Build full pipeline
+# -----------------------------
+pipeline = Pipeline(stages=[
+    side_indexer,
+    symbol_indexer,
+    side_encoder,
+    symbol_encoder,
+    assembler,
+    isof,
+])
+
+# -----------------------------
+# Train model
+# -----------------------------
+train_cols = [
+    "price", "volume", "side", "symbol", "timestamp",
+    "ts", "hour_of_day", "day_of_week"
+]
+
+df_train = df_fe.select(*train_cols).na.drop()
+
+print(f"Training on {df_train.count()} rows...")
+model = pipeline.fit(df_train)
+
+# -----------------------------
+# Save model to S3
+# -----------------------------
+print(f"Saving anomaly detection model to: {MODEL_PATH}")
+model.write().overwrite().save(MODEL_PATH)
+
+print("=== GLUE ANOMALY DETECTION JOB DONE ===")

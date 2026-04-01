@@ -1,5 +1,10 @@
+version: "3.9"
+
 services:
 
+  # ---------------------------------------------------
+  # KAFKA (single-node KRaft mode)
+  # ---------------------------------------------------
   kafka:
     image: apache/kafka:3.7.0
     container_name: kafka
@@ -17,73 +22,64 @@ services:
     ports:
       - "9092:9092"
     networks:
-      - airflow-net
+      - pipeline-net
 
+  # ---------------------------------------------------
+  # PRODUCER (AlphaVantage → Kafka)
+  # ---------------------------------------------------
   producer:
     build:
       context: ./streaming
       dockerfile: Dockerfile.producer
-    image: producer:latest
     container_name: producer
-    depends_on:
-      - kafka
     env_file:
       - .env
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       KAFKA_TOPIC: stock-data
+    depends_on:
+      - kafka
     networks:
-      - airflow-net
+      - pipeline-net
     restart: unless-stopped
 
+  # ---------------------------------------------------
+  # CONSUMER (Kafka → S3)
+  # ---------------------------------------------------
   consumer:
     build:
       context: ./streaming
       dockerfile: Dockerfile.consumer
-    image: consumer:latest
     container_name: consumer
-    depends_on:
-      - kafka
     env_file:
       - .env
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       KAFKA_TOPIC: stock-data
-    networks:
-      - airflow-net
-    restart: unless-stopped
-
-  spark-stream:
-    build:
-      context: ./sparkstream
-      dockerfile: Dockerfile
-    image: spark-stream:latest
-    container_name: spark-stream
     depends_on:
       - kafka
     networks:
-      - airflow-net
+      - pipeline-net
+    restart: unless-stopped
 
-  spark-batch:
-    build:
-      context: ./sparkjob
-      dockerfile: Dockerfile
-    image: sparkjob:latest
-    container_name: sparkjob
-    networks:
-      - airflow-net
 
+  # ---------------------------------------------------
+  # FASTAPI (optional dashboard)
+  # ---------------------------------------------------
   fastapi:
     build:
       context: ./api
       dockerfile: Dockerfile
-    image: fastapi:latest
     container_name: fastapi
     ports:
       - "8000:8000"
     networks:
-      - airflow-net
+      - pipeline-net
+    restart: unless-stopped
 
+  # ---------------------------------------------------
+  # AIRFLOW DATABASE
+  # ---------------------------------------------------
   airflow-postgres:
     image: postgres:13
     container_name: airflow-postgres
@@ -92,8 +88,11 @@ services:
       POSTGRES_PASSWORD: airflow
       POSTGRES_DB: airflow
     networks:
-      - airflow-net
+      - pipeline-net
 
+  # ---------------------------------------------------
+  # AIRFLOW WEBSERVER
+  # ---------------------------------------------------
   airflow-webserver:
     image: apache/airflow:2.9.0
     container_name: airflow-webserver
@@ -102,13 +101,15 @@ services:
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
-      AIRFLOW__WEBSERVER__RBAC: "True"
     ports:
       - "8080:8080"
     command: webserver
     networks:
-      - airflow-net
+      - pipeline-net
 
+  # ---------------------------------------------------
+  # AIRFLOW SCHEDULER
+  # ---------------------------------------------------
   airflow-scheduler:
     image: apache/airflow:2.9.0
     container_name: airflow-scheduler
@@ -119,8 +120,11 @@ services:
       AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
     command: scheduler
     networks:
-      - airflow-net
+      - pipeline-net
 
+# ---------------------------------------------------
+# NETWORK
+# ---------------------------------------------------
 networks:
-  airflow-net:
+  pipeline-net:
     driver: bridge
