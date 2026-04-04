@@ -77,51 +77,6 @@ services:
       - pipeline-net
     restart: unless-stopped
 
-  # ---------------------------------------------------
-  # AIRFLOW DATABASE
-  # ---------------------------------------------------
-  airflow-postgres:
-    image: postgres:13
-    container_name: airflow-postgres
-    environment:
-      POSTGRES_USER: airflow
-      POSTGRES_PASSWORD: airflow
-      POSTGRES_DB: airflow
-    networks:
-      - pipeline-net
-
-  # ---------------------------------------------------
-  # AIRFLOW WEBSERVER
-  # ---------------------------------------------------
-  airflow-webserver:
-    image: apache/airflow:2.9.0
-    container_name: airflow-webserver
-    depends_on:
-      - airflow-postgres
-    environment:
-      AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
-    ports:
-      - "8080:8080"
-    command: webserver
-    networks:
-      - pipeline-net
-
-  # ---------------------------------------------------
-  # AIRFLOW SCHEDULER
-  # ---------------------------------------------------
-  airflow-scheduler:
-    image: apache/airflow:2.9.0
-    container_name: airflow-scheduler
-    depends_on:
-      - airflow-postgres
-    environment:
-      AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
-    command: scheduler
-    networks:
-      - pipeline-net
-
 # ---------------------------------------------------
 # NETWORK
 # ---------------------------------------------------

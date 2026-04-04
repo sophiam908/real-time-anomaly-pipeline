@@ -5,14 +5,18 @@ from pyspark.sql.functions import (
     to_timestamp,
     hour,
     dayofweek,
+    col,
 )
+from pyspark.sql.types import DoubleType
 from pyspark.ml import Pipeline
 from pyspark.ml.feature import (
     StringIndexer,
     OneHotEncoder,
     VectorAssembler,
 )
-from pyspark.ml.iforest import IsolationForest
+from pyspark.ml.clustering import KMeans
+from pyspark.ml.functions import vector_to_array
+from pyspark.sql.functions import udf
 
 # -----------------------------
 # Read job parameters
@@ -32,15 +36,9 @@ print(f"MODEL_PATH = {MODEL_PATH}")
 # Load cleaned data
 # -----------------------------
 df = spark.read.json(CLEAN_PATH)
+
 print("=== INPUT SCHEMA ===")
 df.printSchema()
-
-# Expecting:
-# price: double
-# volume: double
-# side: string
-# symbol: string
-# timestamp: string (ISO 8601)
 
 # -----------------------------
 # Time-based feature engineering
@@ -82,7 +80,7 @@ symbol_encoder = OneHotEncoder(
 )
 
 # -----------------------------
-# Assemble final feature vector
+# Assemble feature vector
 # -----------------------------
 feature_cols = [
     "price",
@@ -99,17 +97,16 @@ assembler = VectorAssembler(
 )
 
 # -----------------------------
-# Isolation Forest (Anomaly Detection)
+# KMeans Model (Anomaly Detection)
 # -----------------------------
-isof = IsolationForest(
+kmeans = KMeans(
     featuresCol="features",
-    predictionCol="anomaly_prediction",
-    anomalyScoreCol="anomaly_score",
-    contamination=0.01,  # top 1% anomalies
+    predictionCol="cluster",
+    k=5,
 )
 
 # -----------------------------
-# Build full pipeline
+# Build pipeline
 # -----------------------------
 pipeline = Pipeline(stages=[
     side_indexer,
@@ -117,26 +114,85 @@ pipeline = Pipeline(stages=[
     side_encoder,
     symbol_encoder,
     assembler,
-    isof,
+    kmeans,
 ])
 
 # -----------------------------
-# Train model
+# Prepare training data
 # -----------------------------
 train_cols = [
-    "price", "volume", "side", "symbol", "timestamp",
-    "ts", "hour_of_day", "day_of_week"
+    "price",
+    "volume",
+    "side",
+    "symbol",
+    "timestamp",
+    "hour_of_day",
+    "day_of_week",
 ]
 
 df_train = df_fe.select(*train_cols).na.drop()
 
 print(f"Training on {df_train.count()} rows...")
+
+# -----------------------------
+# Train model
+# -----------------------------
 model = pipeline.fit(df_train)
 
 # -----------------------------
-# Save model to S3
+# Transform data
 # -----------------------------
-print(f"Saving anomaly detection model to: {MODEL_PATH}")
+predictions = model.transform(df_train)
+
+# -----------------------------
+# Compute anomaly scores
+# -----------------------------
+centers = model.stages[-1].clusterCenters()
+
+# Convert vector → array
+predictions = predictions.withColumn(
+    "features_array",
+    vector_to_array("features")
+)
+
+# Distance function
+def compute_distance(features, cluster):
+    center = centers[cluster]
+    return float(sum((features[i] - center[i])**2 for i in range(len(features))) ** 0.5)
+
+distance_udf = udf(compute_distance, DoubleType())
+
+predictions = predictions.withColumn(
+    "anomaly_score",
+    distance_udf(col("features_array"), col("cluster"))
+)
+
+# -----------------------------
+# Flag top 1% anomalies
+# -----------------------------
+threshold = predictions.approxQuantile(
+    "anomaly_score", [0.99], 0.01
+)[0]
+
+print(f"Anomaly threshold (99th percentile): {threshold}")
+
+predictions = predictions.withColumn(
+    "anomaly_prediction",
+    (col("anomaly_score") >= threshold).cast("int")
+)
+
+# -----------------------------
+# Save model
+# -----------------------------
+print(f"Saving model to: {MODEL_PATH}")
 model.write().overwrite().save(MODEL_PATH)
+
+# -----------------------------
+# Save scored data
+# -----------------------------
+output_path = MODEL_PATH + "/scored_data"
+
+print(f"Saving scored data to: {output_path}")
+predictions.write.mode("overwrite").parquet(output_path)
 
 print("=== GLUE ANOMALY DETECTION JOB DONE ===")
