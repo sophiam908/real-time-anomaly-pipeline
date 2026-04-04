@@ -1,4 +1,4 @@
-# 📘 Real‑Time Crypto Anomaly Detection Pipeline
+# Real‑Time Crypto Anomaly Detection Pipeline
 
 A fully containerized, cloud‑native data engineering and machine learning pipeline that ingests **live cryptocurrency trades**, processes them through a **Kafka streaming system**, cleans and enriches the data using **AWS Glue (Spark)**, detects anomalies using **unsupervised ML**, and loads the results into **Snowflake** for analytics.
 
