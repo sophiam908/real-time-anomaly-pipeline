@@ -1,126 +1,125 @@
 # 📘 Real‑Time Crypto Anomaly Detection Pipeline
 
-This project builds a real‑time, cloud‑native system that collects live cryptocurrency trades, cleans and validates them, engineers meaningful features, and uses machine learning to detect abnormal or suspicious market behavior.  
-It mirrors the type of monitoring systems used by exchanges, hedge funds, and fintech companies.
+A fully containerized, cloud‑native data engineering and machine learning pipeline that ingests **live cryptocurrency trades**, processes them through a **Kafka streaming system**, cleans and enriches the data using **AWS Glue (Spark)**, detects anomalies using **unsupervised ML**, and loads the results into **Snowflake** for analytics.
+
+This project mirrors real‑world architectures used in fintech, trading, and market‑surveillance systems.
 
 ---
 
-## 🔌 1. Live Data Ingestion (Coinbase WebSocket → Kafka)
+# Architecture Diagram
 
-A streaming service connects to the Coinbase WebSocket feed and sends every trade (price, volume, side, symbol, timestamp) into Kafka in real time.
-
-**Why Kafka:**  
-Kafka is built for high‑speed, real‑time data. It buffers spikes, prevents data loss, and decouples ingestion from downstream processing — exactly how real trading systems handle market data.
-
----
-
-## 🐳 Docker‑Based Local Environment
-
-All ingestion components (Kafka, Zookeeper, Producer, Consumer) run inside **Docker containers**.  
-This ensures:
-
-- consistent, reproducible environments  
-- isolated services with clean networking  
-- easy startup/shutdown of the entire pipeline  
-- no dependency conflicts on your local machine  
-
-Using Docker mirrors how real data engineering teams containerize ingestion and streaming workloads.
+> *(Insert your generated architecture image here)*  
+> Example placeholder:  
+> `![Architecture](images/architecture.png)`
 
 ---
 
-## 📥 2. RAW Data Layer (S3)
+# Tech Stack
 
-Kafka streams are written directly into an S3 RAW zone as JSON files.
+### **Streaming & Ingestion**
+- Kafka  
+- WebSockets  
+- Docker  
 
-**Why S3 RAW:**  
-It stores the original data exactly as received, enabling replay, auditing, and reprocessing — a core principle of modern data lake design.
+### **Cloud & Storage**
+- AWS S3 (Raw, Clean, ML Zones)  
+- AWS Glue (Spark ETL + ML)  
+
+### **Machine Learning**
+- PySpark MLlib  
+- KMeans clustering  
+- Feature engineering (time, categorical, numeric)  
+
+### **Analytics**
+- Snowflake  
+- SQL  
+
+### **Languages**
+- Python  
+- SQL  
 
 ---
 
-## 🧹 3. Glue Job 1 — Cleaning & Validation
+# 1. Real‑Time Data Ingestion (Coinbase → Kafka)
 
-This job prepares the data specifically for anomaly detection by:
+A Python WebSocket client streams live crypto trades (BTC, ETH, SOL, DOGE, ADA) from Coinbase and publishes them to Kafka in real time.
 
-- enforcing correct data types  
-- removing invalid or impossible values  
-- validating symbols and buy/sell fields  
-- parsing timestamps  
-- dropping malformed rows  
+**Why Kafka?**
+- Handles high‑frequency market data  
+- Provides durability and backpressure  
+- Decouples ingestion from downstream processing  
+- Mirrors real trading infrastructure  
+
+All ingestion components run in Docker for reproducibility and clean networking.
+
+---
+
+# 2. RAW Data Lake Layer (S3)
+
+A Kafka consumer batches messages and writes them to an **S3 RAW zone** as newline‑delimited JSON.
+
+**Purpose of RAW zone**
+- Immutable source of truth  
+- Enables replay and reprocessing  
+- Supports auditability and debugging  
+
+This follows modern data lake best practices.
+
+---
+
+# 3. Glue Job #1 — Cleaning & Validation
+
+A Spark‑based ETL job performs:
+
+- schema enforcement  
+- timestamp parsing  
+- numeric casting  
+- filtering invalid rows  
+- validating symbols and buy/sell values  
 
 **Why this matters:**  
-Anomaly detection models are sensitive to noise. Clean, consistent data ensures the model learns real market behavior, not ingestion errors.
+Anomaly detection is extremely sensitive to noise. Clean data ensures the model learns real market behavior.
 
 ---
 
-## 🧠 4. Glue Job 2 — Feature Engineering + Anomaly Detection
+# 4. Glue Job #2 — Feature Engineering + Anomaly Detection
 
-Glue Job 2 transforms each trade into a richer feature set:
+This job transforms each trade into a rich feature vector:
 
-- **time features:** hour of day, day of week  
-- **categorical encodings:** buy/sell, crypto symbol  
-- **numeric features:** price, volume  
+### **Feature Engineering**
+- **Time features:** hour of day, day of week  
+- **Categorical encodings:** symbol, buy/sell  
+- **Numeric features:** price, volume  
 
-Then it trains an **Isolation Forest**, an unsupervised ML model widely used in finance to detect unusual or suspicious activity.
+### **Modeling**
+A **KMeans clustering model** is trained to learn normal trading behavior.  
+Anomaly scores are computed as the distance from each point to its cluster center.
 
-**What the model learns:**
+### **Outputs**
+- anomaly score  
+- cluster assignment  
+- binary anomaly flag (top 1% of scores)  
+- saved Spark ML pipeline  
+- scored Parquet dataset  
 
-- normal price/volume patterns  
-- symbol‑specific behavior  
-- typical buy/sell pressure  
-- time‑of‑day and day‑of‑week patterns  
-
-**What it outputs:**  
-Anomaly scores that highlight trades that deviate from expected behavior.
-
-The full ML pipeline (feature engineering + model) is saved to S3 for reuse.
+This creates a reusable ML model and a fully scored dataset for analytics.
 
 ---
 
-## 🏛️ Optional: Snowflake Warehousing
+# 5. Snowflake Analytics Layer
 
-The cleaned and/or anomaly‑scored data can be loaded into **Snowflake** for:
+The scored Parquet files are loaded into Snowflake for:
 
-- fast SQL analytics  
-- dashboarding  
-- long‑term warehousing  
-- BI and reporting  
+- dashboards  
+- anomaly monitoring  
+- symbol‑level analysis  
+- time‑of‑day anomaly patterns  
 - joining with other datasets  
 
-Snowflake provides a scalable, low‑maintenance warehouse layer that complements the S3‑based data lake.
+Example query:
 
-This allows analysts, quants, and data teams to run queries like:
-
-- “Show me the top 1% most anomalous trades today.”  
-- “Which symbols show the highest anomaly frequency?”  
-- “Are anomalies clustering around certain hours?”  
-
-Snowflake turns your anomaly detection pipeline into a fully queryable analytics platform.
-
----
-
-## 🚨 Why Anomaly Detection Is Important
-
-Crypto markets are volatile and prone to:
-
-- manipulation  
-- wash trading  
-- sudden volume spikes  
-- flash‑crash‑like events  
-- API glitches  
-- abnormal buy/sell pressure  
-
-This pipeline automatically flags behavior that looks unusual or risky — something humans cannot do manually at high frequency.
-
----
-
-## 🌍 Real‑World Uses
-
-This system can be used for:
-
-- **market surveillance**  
-- **risk monitoring**  
-- **trading strategy protection**  
-- **data quality checks**  
-- **research on volatility and anomalies**  
-
-It demonstrates end‑to‑end skills in streaming, Docker, cloud data engineering, feature engineering, machine learning, and warehousing.
+```sql
+SELECT *
+FROM crypto_anomalies
+WHERE anomaly_prediction = 1
+ORDER BY anomaly_score DESC;
