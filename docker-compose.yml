@@ -62,21 +62,6 @@ services:
       - pipeline-net
     restart: unless-stopped
 
-
-  # ---------------------------------------------------
-  # FASTAPI (optional dashboard)
-  # ---------------------------------------------------
-  fastapi:
-    build:
-      context: ./api
-      dockerfile: Dockerfile
-    container_name: fastapi
-    ports:
-      - "8000:8000"
-    networks:
-      - pipeline-net
-    restart: unless-stopped
-
 # ---------------------------------------------------
 # NETWORK
 # ---------------------------------------------------
