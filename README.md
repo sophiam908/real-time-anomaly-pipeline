@@ -4,16 +4,6 @@ A fully containerized, cloud‑native data engineering and machine learning pipe
 
 This project mirrors real‑world architectures used in fintech, trading, and market‑surveillance systems.
 
----
-
-# Architecture Diagram
-
-> *(Insert your generated architecture image here)*  
-> Example placeholder:  
-> `![Architecture](images/architecture.png)`
-
----
-
 # Tech Stack
 
 ### **Streaming & Ingestion**
