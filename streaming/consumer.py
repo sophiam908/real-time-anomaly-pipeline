@@ -4,9 +4,7 @@ import time
 from kafka import KafkaConsumer, errors
 import boto3
 
-# -----------------------------
 # Environment variables
-# -----------------------------
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
 KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "stock-data")
 
@@ -14,9 +12,7 @@ S3_BUCKET = os.getenv("S3_BUCKET", "my-anomaly-bucket")
 S3_PREFIX = os.getenv("S3_PREFIX", "raw/stock-data")
 
 
-# -----------------------------
 # Create Kafka Consumer
-# -----------------------------
 def create_consumer():
     return KafkaConsumer(
         KAFKA_TOPIC,
@@ -28,9 +24,7 @@ def create_consumer():
     )
 
 
-# -----------------------------
 # Main loop
-# -----------------------------
 def main():
     # Retry loop so consumer waits for Kafka to be ready
     while True:

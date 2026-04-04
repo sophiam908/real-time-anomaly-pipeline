@@ -5,13 +5,11 @@ import time
 from kafka import KafkaProducer
 import websocket
 
-# -----------------------------
 # Config
-# -----------------------------
 KAFKA_BROKER = os.getenv("KAFKA_BROKER", "kafka:9092")
 KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "stock-data")
 
-# Coinbase product IDs (symbols)
+# Coinbase product IDs
 PRODUCT_IDS = ["BTC-USD", "ETH-USD", "SOL-USD", "DOGE-USD", "ADA-USD"]
 
 WS_URL = "wss://ws-feed.exchange.coinbase.com"
@@ -30,10 +28,7 @@ def create_kafka_producer():
 
 producer = None  # global
 
-
-# -----------------------------
 # WebSocket callbacks
-# -----------------------------
 def on_message(ws, message):
     global producer
     try:

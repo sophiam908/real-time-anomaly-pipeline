@@ -2,9 +2,7 @@ version: "3.9"
 
 services:
 
-  # ---------------------------------------------------
   # KAFKA (single-node KRaft mode)
-  # ---------------------------------------------------
   kafka:
     image: apache/kafka:3.7.0
     container_name: kafka
@@ -24,9 +22,7 @@ services:
     networks:
       - pipeline-net
 
-  # ---------------------------------------------------
   # PRODUCER (AlphaVantage → Kafka)
-  # ---------------------------------------------------
   producer:
     build:
       context: ./streaming
@@ -43,9 +39,7 @@ services:
       - pipeline-net
     restart: unless-stopped
 
-  # ---------------------------------------------------
   # CONSUMER (Kafka → S3)
-  # ---------------------------------------------------
   consumer:
     build:
       context: ./streaming
@@ -62,9 +56,7 @@ services:
       - pipeline-net
     restart: unless-stopped
 
-# ---------------------------------------------------
 # NETWORK
-# ---------------------------------------------------
 networks:
   pipeline-net:
     driver: bridge
